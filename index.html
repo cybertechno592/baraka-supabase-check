@@ -24,7 +24,6 @@ const db=window.supabase.createClient(PROJECT_URL,PUBLISHABLE_KEY);
 const $=id=>document.getElementById(id), esc=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money=x=>'KES '+Number(x||0).toLocaleString('en-KE');
 const cats=['Gas','Accessories','Electricals'];
-const cats=['Gas','Accessories','Electricals'];
 const normCategory=x=>String(x??'').trim().toLowerCase();
 let sessionUser=null, profile=null, tenant=null, branches=[], products=[], stocks=[], staff=[], sales=[], customers=[], submissions=[], closures=[], tenants=[], activeTab='', isSuper=false;
 const say=(id,msg,ok=false)=>{const e=$(id);if(e){e.textContent=msg;e.className='status '+(ok?'good':'bad')}};
