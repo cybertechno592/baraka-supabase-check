@@ -23,13 +23,11 @@
 <script>
 const PROJECT_URL='https://xaxtnvpnbrsevedhbmly.supabase.co';
 const PUBLISHABLE_KEY='sb_publishable_0E5DHXzQu9iWbZ2K983lBA_vvutWdgP';
-const db=window.supabase.createClient(PROJECT_URL,PUBLISHABLE_KEY);
 let db=null;try{if(window.supabase?.createClient)db=window.supabase.createClient(PROJECT_URL,PUBLISHABLE_KEY);else console.error('Supabase browser library did not load.')}catch(e){console.error('Supabase client could not start.',e)}
 const $=id=>document.getElementById(id), esc=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money=x=>'KES '+Number(x||0).toLocaleString('en-KE');
 const cats=['Gas','Accessories','Electricals'];
 const normCategory=x=>String(x??'').trim().toLowerCase();
-let sessionUser=null, profile=null, tenant=null, branches=[], products=[], stocks=[], staff=[], sales=[], customers=[], submissions=[], closures=[], tenants=[], activeTab='', isSuper=false;
 let sessionUser=null, profile=null, tenant=null, branches=[], products=[], stocks=[], staff=[], sales=[], customers=[], submissions=[], closures=[], tenants=[], activeTab='', isSuper=false, stockBranchId='', stockGasSize=null;
 const say=(id,msg,ok=false)=>{const e=$(id);if(e){e.textContent=msg;e.className='status '+(ok?'good':'bad')}};
 if(!db)say('loginStatus',window.__barakaSupabaseLoadFailed?'Sign-in connection did not load. Check internet and reload this page.':'Sign-in connection is unavailable in this page. Open the official Baraka website and reload.');
