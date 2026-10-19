@@ -124,7 +124,9 @@ function stockPage(){
 function salesTable(rows,numbered=false){
   if(!rows.length)return '<div class="empty">No sales found.</div>';
   return `<div class="card tablewrap"><table class="table"><thead><tr><th>${numbered?'No.':'Sale / date'}</th><th>Customer / destination</th><th>Branch / rep</th><th>Delivery assistant</th><th>Type / product</th><th>Total</th><th>Payment</th><th>Cylinder</th><th>Status</th><th>Action</th></tr></thead><tbody>${rows.map((s,index)=>{
-    const canConfirmPickup=profile.role==='Sales Representative'&&s.created_by===sessionUser.id&&s.rider_id===null;
+    // A branch Sales Representative may verify an actual empty-cylinder return
+    // when the assigned delivery assistant has not confirmed it yet.
+    const canConfirmPickup=profile.role==='Sales Representative'&&s.branch_id===profile.branch_id;
     const canConfirmReturn=profile.role==='Admin'||canConfirmPickup;
     const canEdit=profile.role==='Admin'||(profile.role==='Sales Representative'&&s.created_by===sessionUser.id&&!isDateLocked(s.sale_date));
     const protectedCompleteRefill=profile.role==='Sales Representative'&&s.kind==='Gas refill'&&s.paid&&s.empty_returned;
