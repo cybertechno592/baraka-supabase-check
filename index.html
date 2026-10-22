@@ -23,7 +23,7 @@ const $=id=>document.getElementById(id), esc=x=>String(x??'').replace(/[&<>"']/g
 const money=x=>'KES '+Number(x||0).toLocaleString('en-KE');
 const cats=['Gas','Accessories','Electricals'];
 const normCategory=x=>String(x??'').trim().toLowerCase();
-let sessionUser=null, profile=null, tenant=null, branches=[], products=[], stocks=[], staff=[], sales=[], customers=[], submissions=[], closures=[], tenants=[], refillRequests=[], storeRefills=[], borrows=[], borrowBranchOptions=[], borrowStockByKey={}, stockMovements=[],stockMovementsLoading=false,activeTab='', isSuper=false, stockBranchId='', stockGasSize=null, tabHistory=[], operationsLoaded=false, operationsLoading=false,backGuardArmed=false,pageLoading=false,dailyCloseDate=today(),salesDateFilter='',salesBranchFilter='',salesSearchFilter='';
+let sessionUser=null, profile=null, tenant=null, branches=[], products=[], stocks=[], staff=[], sales=[], customers=[], submissions=[], closures=[], tenants=[], refillRequests=[], storeRefills=[], borrows=[], borrowBranchOptions=[], borrowStockByKey={}, stockMovements=[],stockMovementsLoading=false,activeTab='', isSuper=false, stockBranchId='', stockGasSize=null, tabHistory=[], operationsLoaded=false, operationsLoading=false,backGuardArmed=false,pageLoading=false,dailyCloseDate=today(),salesDateFilter='',salesBranchFilter='',salesSearchFilter='',dataWarnings=[];
 const say=(id,msg,ok=false)=>{const e=$(id);if(e){e.textContent=msg;e.className='status '+(ok?'good':'bad')}};
 if(!db)say('loginStatus',window.__barakaSupabaseLoadFailed?'Sign-in connection did not load. Check internet and reload this page.':'Sign-in connection is unavailable in this page. Open the official Baraka website and reload.');
 function toast(s){$('toastRoot').innerHTML=`<div class="toast">${esc(s)}</div>`;setTimeout(()=>$('toastRoot').replaceChildren(),2800)}
@@ -41,16 +41,26 @@ async function login(){const b=$('loginBtn'),loginId=$('loginId').value.trim().t
 async function restoreSession(){if(!db)return;try{const {data,error}=await db.auth.getSession();if(error)throw error;if(!data?.session)return;const {data:{user},error:userError}=await db.auth.getUser();if(userError||!user)throw userError||new Error('Saved sign-in has expired.');const {data:p,error:profileError}=await db.from('profiles').select('*').eq('user_id',user.id).eq('active',true).single();if(profileError||!p)throw profileError||new Error('This staff account is inactive.');sessionUser=user;profile=p;isSuper=p.login_id==='SUPER-ADMIN-001';await loadData();await showApp()}catch(e){console.warn('Could not restore the saved Baraka session.',e);say('loginStatus','Your saved sign-in could not be restored. Check your internet connection and sign in again.') }}
 async function loadData(){
   const t=await db.from('tenants').select('id,name').eq('id',profile.tenant_id).single();if(t.error)throw t.error;tenant=t.data;
-  let profilesQuery=db.from('profiles').select('user_id,tenant_id,branch_id,role,login_id,full_name,active');if(!isSuper)profilesQuery=profilesQuery.eq('tenant_id',profile.tenant_id);
-  const results=await Promise.all([
+  dataWarnings=[];
+  const core=await Promise.all([
     db.from('branches').select('id,tenant_id,name,is_main_store,active').eq('tenant_id',profile.tenant_id).eq('active',true).order('name'),
-    db.from('products').select('id,tenant_id,code,name,model,category,price,active').eq('tenant_id',profile.tenant_id),
+    db.from('products').select('id,tenant_id,code,name,model,category,price,active').eq('tenant_id',profile.tenant_id).order('name')
+  ]);
+  if(core[0].error)throw new Error(`Branches could not be loaded: ${core[0].error.message}`);
+  if(core[1].error)throw new Error(`Products could not be loaded: ${core[1].error.message}. Check the products_read policy and that these products belong to this business. No product data was changed.`);
+  branches=core[0].data||[];
+  products=(core[1].data||[]).sort((a,b)=>String(a.name||'').localeCompare(String(b.name||''),'en',{sensitivity:'base'})||String(a.model||'').localeCompare(String(b.model||''),'en',{sensitivity:'base'}));
+  if(!products.length)dataWarnings.push('Supabase returned zero products for this business. The app did not delete or change products. Ask the Admin to check the product’s business/tenant and the products_read access policy.');
+  let profilesQuery=db.from('profiles').select('user_id,tenant_id,branch_id,role,login_id,full_name,active');if(!isSuper)profilesQuery=profilesQuery.eq('tenant_id',profile.tenant_id);
+  const ancillary=await Promise.all([
     db.from('branch_stock').select('tenant_id,branch_id,product_id,quantity,empty_quantity,faulty_quantity,warning_target_quantity').eq('tenant_id',profile.tenant_id),profilesQuery
   ]);
-  for(const r of results)if(r.error)throw r.error;
-  branches=results[0].data||[];products=(results[1].data||[]).sort((a,b)=>String(a.name||'').localeCompare(String(b.name||''),'en',{sensitivity:'base'})||String(a.model||'').localeCompare(String(b.model||''),'en',{sensitivity:'base'}));
-  stocks=results[2].data||[];staff=results[3].data||[];sales=[];customers=[];submissions=[];closures=[];operationsLoaded=false;
-  if(isSuper){const tr=await db.from('tenants').select('id,name').order('name');if(!tr.error)tenants=tr.data||[]}
+  stocks=ancillary[0].error?[]:(ancillary[0].data||[]);
+  staff=ancillary[1].error?[]:(ancillary[1].data||[]);
+  if(ancillary[0].error)dataWarnings.push(`Stock counts could not be loaded: ${ancillary[0].error.message}`);
+  if(ancillary[1].error)dataWarnings.push(`Staff details could not be loaded: ${ancillary[1].error.message}`);
+  sales=[];customers=[];submissions=[];closures=[];operationsLoaded=false;
+  if(isSuper){const tr=await db.from('tenants').select('id,name').order('name');if(!tr.error)tenants=tr.data||[];else dataWarnings.push(`Business list could not be loaded: ${tr.error.message}`)}
 }
 async function loadPageData(tab){
   const q=(name)=>db.from(name).select('*').eq('tenant_id',profile.tenant_id);
@@ -77,10 +87,10 @@ async function showApp(){
   $('identity').textContent=profile.full_name+' · '+profile.login_id+' · '+(isSuper?'Super Admin':profile.role);
   $('welcomeMessage').textContent=`${profile.role==='Admin'?`Welcome, ${profile.full_name}. Your leadership keeps every Baraka branch moving forward.`:profile.role==='Sales Representative'?`Welcome, ${profile.full_name}. Every customer you serve helps Baraka grow.`:`Welcome, ${profile.full_name}. Your safe and reliable deliveries make a difference.`} ${dailyMotivation(profile.role)}`;
   $('branchLabel').textContent=profile.role==='Admin'?'All branches':branchName(profile.branch_id);activeTab=activeTab&&tabsFor().includes(activeTab)?activeTab:tabsFor()[0];armBackNavigation();pageLoading=true;render();
-  try{await loadPageData(activeTab)}finally{pageLoading=false;render()}
+  try{await loadPageData(activeTab)}catch(e){console.warn(`The ${activeTab} panel could not load.`,e);dataWarnings.push(`The ${activeTab} panel could not load: ${e?.message||'check your internet connection and Supabase access policies'}.`)}finally{pageLoading=false;render()}
 }
-function render(){const ts=tabsFor();$('tabs').innerHTML=ts.map(x=>`<button class="tab ${x===activeTab?'active':''}" onclick="go('${esc(x)}')">${esc(x)}</button>`).join('');$('content').innerHTML=pageLoading?'<div class="card loading-view" role="status">Loading this page…</div>':page(activeTab);if(!pageLoading&&activeTab==='New sale')ensureSalesControls();$('backButton').disabled=false;if(!pageLoading)bindPage()}
-async function go(t,recordHistory=true){if(t===activeTab||!tabsFor().includes(t))return;if(recordHistory&&activeTab)tabHistory.push(activeTab);activeTab=t;pageLoading=true;render();try{await loadPageData(t)}catch(e){fail(e)}finally{pageLoading=false;render()}}
+function render(){const ts=tabsFor();$('tabs').innerHTML=ts.map(x=>`<button class="tab ${x===activeTab?'active':''}" onclick="go('${esc(x)}')">${esc(x)}</button>`).join('');const warningMarkup=dataWarnings.length?`<div class="notice" role="status"><b>Data loading notice</b><br>${dataWarnings.map(esc).join('<br>')}</div>`:'';$('content').innerHTML=warningMarkup+(pageLoading?'<div class="card loading-view" role="status">Loading this page…</div>':page(activeTab));if(!pageLoading&&activeTab==='New sale')ensureSalesControls();$('backButton').disabled=false;if(!pageLoading)bindPage()}
+async function go(t,recordHistory=true){if(t===activeTab||!tabsFor().includes(t))return;if(recordHistory&&activeTab)tabHistory.push(activeTab);activeTab=t;pageLoading=true;render();try{await loadPageData(t)}catch(e){console.warn(`The ${t} panel could not load.`,e);dataWarnings=[...dataWarnings.filter(x=>!x.startsWith(`The ${t} panel could not load:`)),`The ${t} panel could not load: ${e?.message||'check your internet connection and Supabase access policies'}.`]}finally{pageLoading=false;render()}}
 function homeTab(){return profile?.role==='Admin'?'Overview':profile?.role==='Sales Representative'?'New sale':'My deliveries'}
 function goHome(){go(homeTab())}
 function goBack(){const target=tabHistory.length?tabHistory.pop():homeTab();go(target,false)}
@@ -88,7 +98,7 @@ function armBackNavigation(){if(backGuardArmed)return;try{history.pushState({bar
 window.addEventListener('popstate',()=>{if(!backGuardArmed||!sessionUser)return;if($('modal')?.children.length)closeModal();else goBack();try{history.pushState({barakaAppGuard:true},'',location.href)}catch(e){console.warn('Could not restore the Baraka Back guard.',e)}})
 function ensureSalesControls(){const kind=$('kind');if(!kind||$('saleCategory'))return;const categoryField=document.createElement('div');categoryField.className='field';categoryField.innerHTML=`<label>PRODUCT CATEGORY</label><select id="saleCategory">${cats.map(c=>`<option>${esc(c)}</option>`).join('')}</select>`;kind.closest('.field').before(categoryField);$('saleCategory').addEventListener('change',updateSaleCategory);const rider=$('rider'),riderField=$('riderField');if(rider&&riderField){rider.insertAdjacentHTML('beforeend','<option value="other">Other</option>');const other=document.createElement('div');other.className='field hidden';other.id='otherDeliveryField';other.innerHTML='<label>OTHER DELIVERY DETAILS</label><input id="otherDeliveryDetails" maxlength="200" placeholder="Describe the delivery arrangement">';riderField.after(other);rider.addEventListener('change',toggleSaleOptions)}updateSaleCategory()}
 async function refresh(){const keepTab=activeTab,keepBranch=stockBranchId,keepGasSize=stockGasSize,keepScroll=window.scrollY;await loadData();stockBranchId=keepBranch;stockGasSize=keepGasSize;await loadPageData(keepTab);render();window.scrollTo(0,keepScroll)}
-async function logout(){try{if(db?.auth)await db.auth.signOut()}finally{stockBranchId='';stockGasSize=null;stockMovements=[];stockMovementsLoading=false;backGuardArmed=false;operationsLoaded=false;operationsLoading=false;refillRequests=[];storeRefills=[];borrows=[];borrowBranchOptions=[];borrowStockByKey={};tabHistory=[];sessionUser=null;profile=null;tenant=null;branches=[];products=[];stocks=[];staff=[];sales=[];customers=[];submissions=[];closures=[];tenants=[];activeTab='';dailyCloseDate=today();salesDateFilter='';salesBranchFilter='';salesSearchFilter='';pageLoading=false;$('app').classList.add('hidden');$('loginCard').classList.remove('hidden');$('logout').classList.add('hidden');$('loginId').value='';$('password').value='';say('loginStatus','Signed out.',true)}}
+async function logout(){try{if(db?.auth)await db.auth.signOut()}finally{stockBranchId='';stockGasSize=null;stockMovements=[];stockMovementsLoading=false;backGuardArmed=false;operationsLoaded=false;operationsLoading=false;refillRequests=[];storeRefills=[];borrows=[];borrowBranchOptions=[];borrowStockByKey={};tabHistory=[];sessionUser=null;profile=null;tenant=null;branches=[];products=[];stocks=[];staff=[];sales=[];customers=[];submissions=[];closures=[];tenants=[];dataWarnings=[];activeTab='';dailyCloseDate=today();salesDateFilter='';salesBranchFilter='';salesSearchFilter='';pageLoading=false;$('app').classList.add('hidden');$('loginCard').classList.remove('hidden');$('logout').classList.add('hidden');$('loginId').value='';$('password').value='';say('loginStatus','Signed out.',true)}}
 
 function dailyMotivation(role){const quotes={Admin:['Clear records today build a stronger Baraka tomorrow.','Every well-managed branch is a step forward.','Small improvements each day create lasting growth.','Your steady leadership keeps the whole team moving.'], 'Sales Representative':['Every customer served is progress. Keep going.','Honest work today creates better opportunities tomorrow.','One sale at a time, you are helping Baraka grow.','Your effort matters. Make today count.'], 'Delivery Assistant':['Ride safely, deliver with care, and be proud of your work.','Every safe delivery builds trust. Take care on the road.','Stay alert, ride safely, and return well.','Your careful work makes a real difference.']};const list=quotes[role]||quotes.Admin,day=Number(today().replaceAll('-',''))||0;return list[day%list.length]}
 function page(t){if(t==='Client businesses')return clientPage();if(t==='Overview')return overviewPage();if(t==='Stock')return stockPage();if(t==='Sales')return salesPage();if(t==='Customers')return customersPage();if(t==='Daily close')return closePage();if(t==='Data cleanup')return cleanupPage();if(t==='Staff')return staffPage();if(t==='Cylinder operations')return cylinderOperationsPage();if(t==='New sale')return newSalePage();if(t==='My branch sales')return repSalesPage();if(t==='Submit day')return submitPage();return deliveryPage()}
@@ -351,6 +361,7 @@ restoreSession();
 </script>
 </body>
 </html>
+
 
 
 
